@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install "ruff>=0.11" pytest
+      - run: ruff check scripts tests
+      - run: pytest -q
+
+  skill-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SKILL.md frontmatter smoke
+        run: |
+          head -20 SKILL.md | grep -q '^name: baidu-pan$' || { echo "SKILL.md: bad name"; exit 1; }
+          head -20 SKILL.md | grep -q '触发词' || { echo "SKILL.md: missing 触发词"; exit 1; }
+          echo "SKILL.md frontmatter ok"
