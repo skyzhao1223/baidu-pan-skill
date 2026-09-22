@@ -104,13 +104,45 @@ The downloader, share tools and verifier are fully cross-platform — only cooki
 
 ## Legal & safety notes
 
-- For **personal backup of files you have rights to**; respects Baidu's
-  throttling rather than circumventing it (no protocol spoofing beyond a
-  desktop UA on the official download endpoint)
-- `cookies.json` is a full account credential — the scripts chmod it 0600 and
-  never print values; delete it after use
-- Baidu's web API is unofficial and changes without notice; pin failures to
-  exact errnos in issues
+**Intended use.** Personal backup automation for files **you have the rights
+to**, driven by **your own login state** on **your own machine**. This project:
+
+- does **not** circumvent Baidu's speed throttling — measured account-level
+  limits are respected and documented as-is (SVIP is noted as the only
+  speed-up, no bypass is provided or implied)
+- does **not** bypass membership gates — where an official channel requires
+  paid membership (e.g. the ZSpace `/znetdisk` share transfer), that is
+  documented as "gated", not worked around
+- does **not** host, index, or distribute any third-party content; it moves
+  bytes between your own accounts and devices
+- stops and defers to the human whenever risk control intervenes (captcha,
+  delete verification)
+
+**Not for:** mass/industrial scraping, re-sharing or reselling access,
+downloading content you don't have rights to, or any monetized redistribution.
+Using Baidu NetDisk's services remains subject to Baidu's own terms —
+automation may trigger account-level risk controls (captchas, feature
+limits); that risk is borne by the user.
+
+**Credentials.** `cookies.json` is a full account credential — the scripts
+chmod it 0600 and never print values; delete it after use. Nothing is ever
+transmitted anywhere except to Baidu's own endpoints.
+
+**Interoperability documentation.** The API notes here describe observed
+behavior of publicly reachable endpoints for personal interoperability; they
+are unofficial and may break at any time. Pin failures to exact errnos in
+issues.
+
+**Takedown / concerns.** Rights holders or platform representatives with a
+concern should contact the maintainer at
+`skyzhao1223@users.noreply.github.com` — legitimate requests are answered
+promptly.
+
+**Availability.** Every GitHub Release ships auto-generated source archives.
+The maintainer additionally keeps off-platform `git bundle` mirrors of the
+full history (a bundle is directly `git clone`-able); if this repository ever
+disappears, ask the maintainer or check the linked community channels for a
+restore point.
 
 ## Development
 
