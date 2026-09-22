@@ -9,6 +9,8 @@ connections didn't beat the account-wide throttle, Baidu's `md5` field turned
 out to be an object key rather than a content hash, and the delete API is
 risk-control gated. Everything that *did* work is captured here.
 
+> 📖 **Background story (zh)**: [一次 1.4GB 备份引发的逆向 — the full reverse-engineering write-up](https://blog.csdn.net/boyzhaotian/article/details/166349848)
+
 ## How it works
 
 ```
