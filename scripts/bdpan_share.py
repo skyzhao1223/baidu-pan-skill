@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -117,16 +118,60 @@ def cmd_save(args: argparse.Namespace) -> int:
     if out.get("errno") != 0:
         raise BaiduError(out.get("errno"), json.dumps(out.get("info", []), ensure_ascii=False))
 
-    saved = []
-    for item in sess.list_dir(args.dest, bdstoken):
-        if any(item.get("server_filename") == f["name"] for f in files):
-            saved.append({"fs_id": item["fs_id"], "path": item["path"],
-                          "size": int(item.get("size", 0)),
-                          "name": item.get("server_filename")})
+    # Map each selected share item by source fs_id for metadata lookup
+    by_fsid = {f["fs_id"]: f for f in files}
+    saved: list[dict] = []
+    extra_list = (out.get("extra") or {}).get("list") or []
+    if extra_list:
+        for item in extra_list:
+            src = by_fsid.get(item.get("from_fs_id"), {})
+            to_path = item.get("to") or f"{args.dest}/{src.get('name', '?')}"
+            if src.get("isdir"):
+                # folder share: walk the transferred subtree; relpath keeps the
+                # folder name as root so `download --batch` mirrors the tree
+                for f in sess.list_tree(to_path, bdstoken):
+                    f["duration"] = None
+                    saved.append(f)
+            else:
+                saved.append({
+                    "fs_id": item.get("to_fs_id"),
+                    "path": to_path,
+                    "name": to_path.rsplit("/", 1)[-1],
+                    "relpath": to_path.rsplit("/", 1)[-1],
+                    "size": int(src.get("size", 0)),
+                    "duration": src.get("duration"),
+                })
+    else:
+        # async transfer without an immediate mapping: fall back to matching
+        # the destination listing by name (files only; folders need list_tree)
+        expected = {f["name"] for f in files}
+        listing: list[dict] = []
+        for _ in range(30):  # up to ~60s for the async task to land
+            listing = sess.list_dir(args.dest, bdstoken)
+            found = {i.get("server_filename") for i in listing}
+            if expected <= found:
+                break
+            time.sleep(2)
+        for item in listing:
+            name = item.get("server_filename")
+            src = next((f for f in files if f["name"] == name), None)
+            if src is None:
+                continue
+            if str(item.get("isdir", 0)) == "1":
+                for f in sess.list_tree(item["path"], bdstoken):
+                    f["duration"] = None
+                    saved.append(f)
+            else:
+                saved.append({"fs_id": item["fs_id"], "path": item["path"],
+                              "name": name, "relpath": name,
+                              "size": int(item.get("size", 0)),
+                              "duration": src.get("duration")})
+
     print(json.dumps({"dest": args.dest, "saved": saved}, ensure_ascii=False, indent=1))
-    if len(saved) != len(files):
-        print(f"warning: transferred {len(files)} but found {len(saved)} in {args.dest}",
-              file=sys.stderr)
+    n_dirs = sum(1 for f in files if f["isdir"])
+    if len(saved) < len(files) - n_dirs:
+        print(f"warning: selected {len(files)} items but collected {len(saved)} "
+              f"files under {args.dest}", file=sys.stderr)
     return 0
 
 

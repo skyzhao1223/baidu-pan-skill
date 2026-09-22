@@ -78,3 +78,83 @@ def test_human_size():
     assert human_size(512) == "512B"
     assert human_size(712957982) == "679.9MB"
     assert human_size(2 * 1024**3) == "2.0GB"
+
+
+# --- v0.2: auth classification, cookie filter, tree walk ---
+
+from bdpan_common import AuthExpiredError, Session, filter_cookies, is_auth_error  # noqa: E402
+
+
+@pytest.mark.parametrize("status,body,expected", [
+    (403, '{"error_code":31045,"error_msg":"user not exists"}', True),
+    (403, '{"error_code":31362,"error_msg":"sign error"}', False),
+    (401, 'auth fail', True),
+    (500, '31045', False),          # non-auth status
+    (403, 'rate limited', False),
+])
+def test_is_auth_error(status, body, expected):
+    assert is_auth_error(status, body) is expected
+
+
+def test_auth_expired_error_is_baidu_error():
+    from bdpan_common import BaiduError
+    assert issubclass(AuthExpiredError, BaiduError)
+
+
+def test_filter_cookies_whitelist():
+    raw = {"BDUSS": "a", "STOKEN": "s", "TRACKER": "t", "BAD": "x\ufffd"}
+    assert filter_cookies(raw) == {"BDUSS": "a", "STOKEN": "s"}
+
+
+class _FakeSess(Session):
+    """Session with a canned get_json for list_dir/list_tree tests."""
+
+    def __init__(self, pages):
+        super().__init__(cookies={"BDUSS": "x"})
+        self._pages = pages
+        self.calls = []
+
+    def get_json(self, url, params=None, data=None):
+        self.calls.append(params)
+        start = int((params or {}).get("start", 0))
+        return {"errno": 0, "list": self._pages.get(start, [])}
+
+
+def _row(name, isdir=0, size=10):
+    return {"fs_id": hash(name) % 10**9, "server_filename": name,
+            "path": "/root/" + name, "isdir": isdir, "size": size}
+
+
+def test_list_dir_paginates():
+    page0 = [_row(f"f{i}") for i in range(100)]
+    page1 = [_row("last")]
+    s = _FakeSess({0: page0, 100: page1})
+    rows = s.list_dir("/root", "tok", page_size=100)
+    assert len(rows) == 101
+    assert [c["start"] for c in s.calls] == [0, 100]
+
+
+def test_list_tree_recurses_with_relpath():
+    FAKE_TREE = {
+        "/dest/课程": [
+            {"fs_id": 1, "server_filename": "sub", "path": "/dest/课程/sub",
+             "isdir": 1, "size": 0},
+            {"fs_id": 2, "server_filename": "a.mov", "path": "/dest/课程/a.mov",
+             "isdir": 0, "size": 100},
+        ],
+        "/dest/课程/sub": [
+            {"fs_id": 3, "server_filename": "b.mov", "path": "/dest/课程/sub/b.mov",
+             "isdir": 0, "size": 50},
+        ],
+    }
+
+    class TreeSess(_FakeSess):
+        def list_dir(self, path, bdstoken, page_size=100):
+            return FAKE_TREE.get(path, [])
+
+    s = TreeSess({})
+    files = s.list_tree("/dest/课程", "tok")
+    rel = sorted(f["relpath"] for f in files)
+    assert rel == ["课程/a.mov", "课程/sub/b.mov"]
+    assert sorted(f["size"] for f in files) == [50, 100]
+    assert all(not f.get("isdir") for f in files)

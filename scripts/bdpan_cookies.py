@@ -137,6 +137,25 @@ def extract(cookie_db: Path, key: bytes) -> dict[str, str]:
     return cookies
 
 
+def extract_cookies(browser: str = "chrome", profile_dir: str | None = None) -> dict:
+    """Extract + decrypt baidu.com cookies; reusable API for other scripts.
+
+    macOS only. Raises SystemExit with guidance elsewhere.
+    """
+    if sys.platform != "darwin":
+        raise SystemExit(
+            "cookie extraction is macOS-only (Keychain). On Linux the Safe Storage "
+            "password is the fixed string 'peanuts'; Windows needs DPAPI — see "
+            "issues #1/#2. Bring your own cookies.json on other platforms."
+        )
+    if profile_dir:
+        db = Path(profile_dir).expanduser() / "Cookies"
+    else:
+        db = Path(DEFAULT_COOKIE_DB[browser]).expanduser()
+    password = get_safe_storage_password(browser)
+    return extract(db, derive_key(password))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--browser", choices=sorted(KEYCHAIN_SERVICE), default="chrome")
@@ -146,20 +165,7 @@ def main() -> None:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    if sys.platform != "darwin":
-        raise SystemExit(
-            "only macOS is supported (Keychain-based). On Linux the Safe Storage "
-            "password is the fixed string 'peanuts'; Windows needs DPAPI — PRs welcome."
-        )
-
-    if args.profile_dir:
-        db = Path(args.profile_dir).expanduser() / "Cookies"
-    else:
-        db = Path(DEFAULT_COOKIE_DB[args.browser]).expanduser()
-
-    password = get_safe_storage_password(args.browser)
-    key = derive_key(password)
-    cookies = extract(db, key)
+    cookies = extract_cookies(args.browser, args.profile_dir)
 
     out = Path(args.out)
     out.write_text(json.dumps(cookies, ensure_ascii=False, indent=1), encoding="utf-8")

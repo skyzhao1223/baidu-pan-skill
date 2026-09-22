@@ -39,19 +39,26 @@ python3 scripts/bdpan_cookies.py --out /tmp/ck.json
 # 2. see what's in a share link
 python3 scripts/bdpan_share.py inspect "https://pan.baidu.com/s/1xxxx?pwd=ab12" --cookies /tmp/ck.json
 
-# 3. transfer it into your own pan, then download (resumable)
+# 3. transfer it into your own pan, then download (resumable, auto-verified)
 python3 scripts/bdpan_share.py save "https://pan.baidu.com/s/1xxxx?pwd=ab12" \
     --cookies /tmp/ck.json --dest "/备份中转" > saved.json
-python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json --out ~/Downloads/share
+python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json \
+    --out ~/Downloads/share --verify
 
-# 4. verify integrity (size + container atoms + duration)
+# 4. (or verify separately: size + container atoms + duration)
 python3 scripts/bdpan_verify.py ~/Downloads/share/视频.mov --expect-size 740378697 --expect-duration 3615
 
 rm /tmp/ck.json   # cookies are credentials — delete when done
 ```
 
-Interrupted? Re-run the same download command — `*.dlstate.json` tracks
-completed 4 MB chunks, nothing is re-downloaded.
+- **Folder shares work**: `save` transfers whole directories and walks the
+  subtree; `--batch` mirrors the tree locally via `relpath`.
+- **Interrupted?** Re-run the same download command — `*.dlstate.json` tracks
+  completed 4 MB chunks, nothing is re-downloaded.
+- **Cookies expired mid-run?** On macOS the downloader re-extracts them from
+  the browser automatically (up to 2×) and resumes the same chunk.
+- Every chunk's `Content-Range` is validated against the requested window —
+  a mis-serving CDN fails loudly instead of corrupting the file.
 
 ## The hard-won knowledge (why this repo exists)
 

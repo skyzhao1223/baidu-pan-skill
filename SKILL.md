@@ -32,8 +32,8 @@ Cookie 自动提取 → 分享解析 → 转存 → 断点续传下载 → 结�
 |------|------|------|
 | 1. 提取 Cookie | `python3 scripts/bdpan_cookies.py --out /tmp/ck.json` | 0600 JSON；缺 BDUSS/STOKEN/BAIDUID 会报错并提示先登录 |
 | 2a. 只看分享内容 | `python3 scripts/bdpan_share.py inspect "<url>" --cookies /tmp/ck.json` | JSON：shareid、files[]（fs_id/size/duration/md5_object_key） |
-| 2b. 转存到自己网盘 | `python3 scripts/bdpan_share.py save "<url>" --cookies /tmp/ck.json --dest "/备份中转"` | JSON：saved[]（path/size/fs_id），可直接喂给下载 |
-| 3. 断点续传下载 | `python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json --out ~/Downloads/x` 或 `--remote "/路径/文件.mov" --size N` | 分块下载 + `*.dlstate.json` 账本；中断重跑即续传 |
+| 2b. 转存到自己网盘 | `python3 scripts/bdpan_share.py save "<url>" --cookies /tmp/ck.json --dest "/备份中转"` | JSON：saved[]（path/size/fs_id/relpath/duration），可直接喂给下载；**文件夹分享自动递归整树** |
+| 3. 断点续传下载 | `python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json --out ~/Downloads/x --verify` 或 `--remote "/路径/文件.mov" --size N` | 分块下载 + `*.dlstate.json` 账本；中断重跑即续传；`--verify` 下载完自动三重校验；每块校验 Content-Range；macOS 上 Cookie 过期自动重提（≤2 次） |
 | 4. 校验 | `python3 scripts/bdpan_verify.py FILE --expect-size N --expect-duration S` | 大小 + 容器原子结构 + ffprobe 时长三重校验，退出码 0/1 |
 
 分享文件如果**已在用户自己网盘里**（用 2a 的 fs_id 对不上时先问用户或 `inspect`
@@ -46,7 +46,7 @@ Cookie 自动提取 → 分享解析 → 转存 → 断点续传下载 → 结�
 1. 提取 Cookie → `inspect` 拿到文件清单，**把总大小和预估耗时报给用户**
    （非会员 ~50KB/s：1GB ≈ 6 小时；用户是 SVIP 则秒级满速）——耗时超预期时先问
 2. `save --dest "/备份中转-xxx"`（转存目录名带上用途，方便事后清理）
-3. 下载放**后台任务**跑（几小时级），每完成一个文件立即 `verify`
+3. 下载放**后台任务**跑（几小时级），加 `--verify` 让每个文件下载完自动校验（batch 自带 duration 元数据）
 4. 校验过的文件用 zspace-nas skill（`zs up`，大文件走分片）上传 NAS，
    `zs info` 对字节数
 5. 收尾提醒用户：网盘中转目录可在百度客户端删除（**API 删除会被风控挡，见踩坑**）；
@@ -73,7 +73,8 @@ Cookie → `save`。报告 saved[] 的路径与大小即可。
 5. **captcha**：`share/verify` 或分享页返回验证码（脚本会报 `captcha` errno）时，
    让用户在浏览器打开一次该链接再重试。
 6. Cookie 失效特征：`gettemplatevariable` errno -6 或 loginstate≠1 → 重新提取；
-   下载中持续 403 → Cookie 过期或被风控，停下来问用户，不要无限重试。
+   下载中遇认证类 403（31045 等）时，macOS 上下载器会自动重提 Cookie 续命（≤2 次），
+   仍失败才停——非 macOS 平台直接失败并保存进度，问用户要新 cookies.json。
 
 ## 踩坑记录（逆向实测，2026-09）
 
@@ -84,7 +85,7 @@ Cookie → `save`。报告 saved[] 的路径与大小即可。
 - 分享页数据在 `locals.mset({...});` 里，一次拿全 shareid/uk/file_list（含 duration）
 - 极空间 NAS 侧的 `/znetdisk/*` 百度集成：分享直下需要"百度 NAS 会员"（服务端
   code 15 强制），非会员的 `file/download` 任务会以 0 B/s 卡死——不要尝试 NAS 旁路
-- 下载器进度行的速率若按"累计块数/本次运行时间"计算，续传时会虚高——ETA 报给用户前留意
+- 下载器进度行的速率若按"累计块数/本次运行时间"计算，续传时会虚高（v0.2 已修：只统计本次会话字节数）——旧版本 ETA 报给用户前留意
 
 ## 故障排查
 
@@ -93,5 +94,5 @@ Cookie → `save`。报告 saved[] 的路径与大小即可。
 | `missing required cookies` | 浏览器没登录百度网盘 → 登录后重跑 cookies |
 | Keychain 弹窗被拒 | 重跑并在弹窗点"始终允许"，或 `security find-generic-password -s "Chrome Safe Storage" -w` 手动验证 |
 | verify 失败但大小对 | 容器原子不平铺 → 下载错位，删掉 .dlstate.json 和文件重下 |
-| 持续 `chunk N: HTTP Error 403` | Cookie 过期/风控 → 重新提取；仍 403 则让用户浏览器打开网盘一次 |
+| 持续 403 / `credentials rejected` | macOS 会先自动重提 Cookie；仍失败 = 风控或浏览器登出 → 让用户浏览器打开网盘一次再重跑（账本还在） |
 | 速度突然归零 | 账号级风控（当日下载量过大）→ 隔天续传，账本还在 |

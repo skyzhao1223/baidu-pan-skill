@@ -39,18 +39,23 @@ python3 scripts/bdpan_cookies.py --out /tmp/ck.json
 # 2. 查看分享内容
 python3 scripts/bdpan_share.py inspect "https://pan.baidu.com/s/1xxxx?pwd=ab12" --cookies /tmp/ck.json
 
-# 3. 转存到自己网盘，然后断点续传下载
+# 3. 转存到自己网盘，然后断点续传下载（带自动校验）
 python3 scripts/bdpan_share.py save "https://pan.baidu.com/s/1xxxx?pwd=ab12" \
     --cookies /tmp/ck.json --dest "/备份中转" > saved.json
-python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json --out ~/Downloads/share
+python3 scripts/bdpan_download.py --cookies /tmp/ck.json --batch saved.json \
+    --out ~/Downloads/share --verify
 
-# 4. 完整性校验
+# 4. （或单独校验：大小 + 容器原子 + 时长）
 python3 scripts/bdpan_verify.py ~/Downloads/share/视频.mov --expect-size 740378697 --expect-duration 3615
 
 rm /tmp/ck.json   # Cookie 就是账号凭据——用完即删
 ```
 
-下载中断？原命令重跑即可——`*.dlstate.json` 账本记录已完成的 4MB 块，一块都不会重下。
+- **文件夹分享全支持**：`save` 整目录转存并递归遍历子树，`--batch` 按
+  `relpath` 在本地镜像目录结构（课程类分享就是整个目录的场景）
+- 下载中断？原命令重跑即可——`*.dlstate.json` 账本记录已完成的 4MB 块，一块都不会重下
+- **Cookie 中途过期？** macOS 上下载器自动重新从浏览器提取（最多 2 次），原块续传不丢进度
+- 每块都校验 `Content-Range` 与请求区间一致——CDN 错位返回会立刻报错，绝不静默写坏文件
 
 ## 血泪经验表（本仓库存在的意义）
 

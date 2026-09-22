@@ -44,6 +44,26 @@ class BaiduError(RuntimeError):
         super().__init__(f"[errno {errno}] {msg}".strip())
 
 
+class AuthExpiredError(BaiduError):
+    """Cookies expired / rejected mid-run — recoverable by re-extraction on macOS.
+
+    Distinguished from generic failures so long downloads can auto-refresh
+    credentials instead of burning retries against a dead session.
+    """
+
+
+# PCS/API error fragments that mean "identity rejected" rather than "try later".
+_AUTH_ERROR_MARKERS = ("31045", "31064", "31066", "user not exists", "auth fail")
+
+
+def is_auth_error(status: int, body: str) -> bool:
+    """True when an HTTP error body indicates expired/invalid credentials."""
+    if status not in (401, 403):
+        return False
+    low = body.lower()
+    return any(m in low for m in _AUTH_ERROR_MARKERS)
+
+
 def parse_share_url(url: str) -> tuple[str, str | None]:
     """Extract ``(surl, pwd)`` from a Baidu share URL.
 
@@ -78,6 +98,14 @@ def parse_locals_mset(html: str) -> dict | None:
         return None
 
 
+def filter_cookies(raw: dict) -> dict[str, str]:
+    """Keep only SEND_COOKIES whitelist entries with ASCII values."""
+    return {
+        k: v for k, v in raw.items()
+        if k in SEND_COOKIES and isinstance(v, str) and v.isascii()
+    }
+
+
 def load_cookies(path: str | Path) -> dict[str, str]:
     """Load a cookies.json produced by bdpan_cookies.py.
 
@@ -87,10 +115,7 @@ def load_cookies(path: str | Path) -> dict[str, str]:
     crash HTTP header encoding.
     """
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    return {
-        k: v for k, v in raw.items()
-        if k in SEND_COOKIES and isinstance(v, str) and v.isascii()
-    }
+    return filter_cookies(raw)
 
 
 def check_cookies(cookies: dict[str, str]) -> list[str]:
@@ -186,13 +211,52 @@ class Session:
             raise BaiduError("parse", "locals.mset not found in share page (layout change?)")
         return data
 
-    def list_dir(self, path: str, bdstoken: str) -> list[dict]:
-        out = self.get_json("https://pan.baidu.com/api/list",
-                            params={**BASE_PARAMS, "dir": path, "order": "name",
-                                    "bdstoken": bdstoken})
-        if out.get("errno") != 0:
-            raise BaiduError(out.get("errno"), f"list {path} failed")
-        return out.get("list", [])
+    def list_dir(self, path: str, bdstoken: str, page_size: int = 100) -> list[dict]:
+        """List one directory, paging until exhausted (API caps each page)."""
+        entries: list[dict] = []
+        start = 0
+        while True:
+            out = self.get_json("https://pan.baidu.com/api/list",
+                                params={**BASE_PARAMS, "dir": path, "order": "name",
+                                        "start": start, "num": page_size,
+                                        "bdstoken": bdstoken})
+            if out.get("errno") != 0:
+                raise BaiduError(out.get("errno"), f"list {path} failed")
+            page = out.get("list", [])
+            entries.extend(page)
+            if len(page) < page_size:
+                break
+            start += len(page)
+        return entries
+
+    def list_tree(self, root: str, bdstoken: str) -> list[dict]:
+        """Recursively list FILES under *root* (root itself may be a file).
+
+        Each returned entry gets a ``relpath`` field relative to *root*'s
+        parent — i.e. ``root_basename/sub/file.ext`` — so callers can mirror
+        the tree locally.
+        """
+        base = root.rstrip("/")
+        root_name = base.rsplit("/", 1)[-1] or base
+        files: list[dict] = []
+
+        def walk(dir_path: str, rel_prefix: str) -> None:
+            for e in self.list_dir(dir_path, bdstoken):
+                name = e.get("server_filename") or e.get("path", "").rsplit("/", 1)[-1]
+                rel = f"{rel_prefix}/{name}" if rel_prefix else name
+                if str(e.get("isdir", 0)) == "1":
+                    walk(e["path"], rel)
+                else:
+                    files.append({
+                        "fs_id": e.get("fs_id"),
+                        "path": e["path"],
+                        "relpath": rel,
+                        "name": name,
+                        "size": int(e.get("size", 0)),
+                    })
+
+        walk(base, root_name)
+        return files
 
 
 def human_size(n: float) -> str:
